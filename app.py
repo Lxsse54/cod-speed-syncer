@@ -152,7 +152,14 @@ HERO_DATABASE = [
     }
 ]
 
-MarchSetup = namedtuple('MarchSetup', ['main', 'deputy', 'total_speed', 'talent_config', 'synergy_match', 'skill_breakdown'])
+# Synergy Definitions (Bidirectional or Directional)
+# Format: "HeroName": {"PartnerName": "Type"}
+# Types: "Synergy" (Green), "Anti-Synergy" (Red)
+HERO_SYNERGIES = {
+    # Placeholders - User to provide
+}
+
+MarchSetup = namedtuple('MarchSetup', ['main', 'deputy', 'total_speed', 'talent_config', 'synergy_match', 'skill_breakdown', 'specific_synergy'])
 
 # ==========================================
 # 2. Logic
@@ -220,7 +227,7 @@ def get_skill_speed(hero_name, level, is_main, is_theia_flying=False):
     idx = max(0, min(level - 1, 4))
     return s_list[idx]
 
-def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, use_neya_artifact=False, is_theia_flying=False):
+def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, neya_artifact_bonus=0.0, is_theia_flying=False):
     if main.startswith("Generic"):
         m_data = {"Name": main, "Type": "Cavalry", "Big_Talent": "None"} # Dummy
     else:
@@ -244,8 +251,8 @@ def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, u
     
     # 3. Artifacts
     artifact_bonus = 0.0
-    if use_neya_artifact and ("Neya" in [main, deputy]):
-        artifact_bonus = 40.0
+    if neya_artifact_bonus > 0 and ("Neya" in [main, deputy]):
+        artifact_bonus = neya_artifact_bonus
     
     fixed_speed = m_skill + d_skill + big_talent_val + artifact_bonus
     
@@ -276,13 +283,19 @@ def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, u
     if artifact_bonus > 0:
         skill_breakdown += f" + Lunaris({artifact_bonus})"
         
+    # Synergy Check
+    syn_type = HERO_SYNERGIES.get(main, {}).get(deputy)
+    if not syn_type:
+        syn_type = HERO_SYNERGIES.get(deputy, {}).get(main) # Bidirectional check
+    
     return MarchSetup(
         main=main,
         deputy=deputy,
         total_speed=final_speed,
         talent_config=tal_desc,
         synergy_match=is_synergy,
-        skill_breakdown=skill_breakdown
+        skill_breakdown=skill_breakdown,
+        specific_synergy=syn_type
     )
 
 def all_pairs_generator(items, forced_mains=None):
@@ -330,9 +343,13 @@ selected_names = st.sidebar.multiselect("Select Heroes", all_names, default=defa
 num_fillers = st.sidebar.number_input("Add Generic Deputies / Temu Cav Deputies", min_value=0, max_value=10, value=0, help="Use these to fill empty slots in your marches. Can be archer heroes like Nico, or inf like Mogro")
 
 # Artifact Config
-has_neya_artifact = False
+neya_artifact_bonus = 0.0
 if "Neya" in selected_names:
-    has_neya_artifact = st.sidebar.checkbox("Lunaris Artifact (+40%)", value=False)
+    use_lunaris = st.sidebar.checkbox("Lunaris Artifact", value=False, help="Lunaris only gives move speed when paired with Neya and might not be ideal because it only out of combat.")
+    if use_lunaris:
+        lunaris_level = st.sidebar.select_slider("Lunaris Level", options=[1, 2, 3, 4, 5], value=5)
+        # Map level to speed: 1=20, 2=25, 3=30, 4=35, 5=40
+        neya_artifact_bonus = 15.0 + (lunaris_level * 5.0)
     
 is_theia_flying = False
 if "Theia" in selected_names:
@@ -414,7 +431,7 @@ def run_optimization():
         
     for m, d in forced_pairs:
         pinned_heroes.extend([m, d])
-        res = solve_for_march(m, d, user_skill_levels, TARGET_SPEED, has_neya_artifact, is_theia_flying)
+        res = solve_for_march(m, d, user_skill_levels, TARGET_SPEED, neya_artifact_bonus, is_theia_flying)
         fixed_results.append(res)
         
     remaining_roster = [h for h in selected_names if h not in pinned_heroes]
@@ -474,7 +491,7 @@ def run_optimization():
             total_deviation = fixed_dev
             
             for main, deputy in pair_list:
-                res = solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, has_neya_artifact, is_theia_flying)
+                res = solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, neya_artifact_bonus, is_theia_flying)
                 current_results.append(res)
                 
                 dev = abs(res.total_speed - TARGET_SPEED)
@@ -561,10 +578,21 @@ else:
         
         # -- Details --
         for i, match in enumerate(best_set, 1):
-            with st.expander(f"March {i}: {match.main} + {match.deputy}  ({match.total_speed:.1f}%)", expanded=True):
+            # Format title with synergy indicator
+            syn_icon = ""
+            if match.specific_synergy == "Synergy": syn_icon = "✅ "
+            elif match.specific_synergy == "Anti-Synergy": syn_icon = "❌ "
+            
+            with st.expander(f"March {i}: {syn_icon}{match.main} + {match.deputy}  ({match.total_speed:.1f}%)", expanded=True):
                 ic1, ic2 = st.columns(2)
                 ic1.markdown(f"**Main:** {match.main}")
                 ic1.markdown(f"**Deputy:** {match.deputy}")
+                if match.specific_synergy:
+                    color = "green" if match.specific_synergy == "Synergy" else "red"
+                    ic1.markdown(f"**Synergy:** :{color}[{match.specific_synergy}]")
+                else:
+                     ic1.caption("No Synergy")
+                
                 ic1.markdown(f"**Talents:** {match.talent_config}")
                 
                 ic2.caption("Calculation:")
