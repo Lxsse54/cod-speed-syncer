@@ -259,7 +259,7 @@ if "Neya" in selected_names:
 user_skill_levels = {}
 if selected_names:
     st.sidebar.markdown("---") 
-    st.sidebar.subheader("Hero Skill Levels")
+    st.sidebar.subheader("Hero March speed Skill Levels (ignore if hero doesn't have one)")
     cols = st.sidebar.columns(2)
     for i, name in enumerate(selected_names):
         with cols[i % 2]:
