@@ -16,7 +16,9 @@ TALENT_TREES_DEF = {
     "Mobility": {5: 10.0, 15: 20.0, 26: 25.0},
     "Overall": {10: 10.0},
     "Peacekeeping": {10: 10.0},
-    "Control": {5: 10.0}
+    "Control": {5: 10.0},
+    "Support": {},
+    "Skills": {}
 }
 MAX_TALENT_POINTS = 49
 INNATE_SPEED_BONUS = 6.0
@@ -26,7 +28,8 @@ BIG_TALENT_EFFECTS = {
     "Balanced Heart": 5.0,
     "Mighty Power": 0.0,
     "Shield of Stability": -2.0,
-    "Backstabber": 0.0
+    "Backstabber": 0.0,
+    "Transforming Spirit": 0.0
 }
 
 HERO_DATABASE = [
@@ -107,6 +110,45 @@ HERO_DATABASE = [
         "Trees": ["Cavalry", "Pvp"],
         "Skill_Speeds": [0.0] * 5,
         "Big_Talent": "Mighty Power"
+    },
+    {
+        "Name": "Mu Hsiang",
+        "Type": "Cavalry",
+        "Trees": ["Overall", "Pvp", "Support"],
+        "Skill_Speeds": [0.0] * 5,
+        "Big_Talent": "Transforming Spirit"
+    },
+    {
+        "Name": "Theia",
+        "Type": "Cavalry", # Conditional Flying
+        "Trees": ["Overall", "Pvp", "Support"],
+        "Skill_Speeds": [0.0] * 5, # Special rule handling needed
+        "Big_Talent": "Transforming Spirit", # Guessing? User didn't specify. Assuming neutral like others or user can correct.
+        # Wait, user didn't specify big talent for Theia/Seluna. I'll default to "Mighty Power" (0) or similar to be safe.
+        # Actually user said "Mu Hsiang has a new big talent...". 
+        # I will assume "Mighty Power" (0 impact) for Theia/Seluna unless told otherwise.
+        "Special_Rule": "Theia_Flying" 
+    },
+    {
+        "Name": "Seluna",
+        "Type": "Cavalry",
+        "Trees": ["Overall", "Pvp", "Skills"],
+        "Skill_Speeds": [8.0, 10.0, 12.0, 16.0, 20.0],
+        "Big_Talent": "Mighty Power" # Default
+    },
+    {
+        "Name": "Falgrim",
+        "Type": "Cavalry",
+        "Trees": ["Pvp"],
+        "Skill_Speeds": [4.0, 5.0, 6.0, 8.0, 10.0],
+        "Big_Talent": "Mighty Power" # Default
+    },
+    {
+        "Name": "Alistair",
+        "Type": "Cavalry",
+        "Trees": ["Cavalry", "Tank"],
+        "Skill_Speeds": [0.0] * 5,
+        "Big_Talent": "Mighty Power" # Default
     }
 ]
 
@@ -153,29 +195,48 @@ def get_achievable_talent_speeds(hero_name):
                 
     return valid_configs
 
-def get_skill_speed(hero_name, level, is_main):
+def get_skill_speed(hero_name, level, is_main, is_theia_flying=False):
+    if hero_name.startswith("Generic"):
+        return 0.0
+        
     hero = next(h for h in HERO_DATABASE if h["Name"] == hero_name)
     
     if hero.get("Special_Rule") == "Main_Only" and not is_main:
         return 0.0
         
-    s_list = hero.get("Skill_Speeds", [0]*5)
+    if hero.get("Special_Rule") == "Theia_Flying":
+        if is_theia_flying:
+            # Special array for Theia Flying
+            s_list = [10.0, 12.0, 14.0, 16.0, 20.0]
+            # Use logic below to pick level
+        else:
+            return 0.0
+    else:
+        s_list = hero.get("Skill_Speeds", [0]*5)
+        
     if level < 1: 
         return 0.0
     
     idx = max(0, min(level - 1, 4))
     return s_list[idx]
 
-def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, use_neya_artifact=False):
-    m_data = next(h for h in HERO_DATABASE if h["Name"] == main)
-    # d_data = next(h for h in HERO_DATABASE if h["Name"] == deputy) 
+def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, use_neya_artifact=False, is_theia_flying=False):
+    if main.startswith("Generic"):
+        m_data = {"Name": main, "Type": "Cavalry", "Big_Talent": "None"} # Dummy
+    else:
+        m_data = next(h for h in HERO_DATABASE if h["Name"] == main)
     
+    # Deputy data fetch not strictly needed for speed calc, but needed for type check if we wanted detailed synergy
+    d_type = "Cavalry"
+    if not deputy.startswith("Generic"):
+        d_type = next(h["Type"] for h in HERO_DATABASE if h["Name"] == deputy)
+
     m_lvl = user_skill_inputs_levels.get(main, 1)
     d_lvl = user_skill_inputs_levels.get(deputy, 1)
     
     # 1. Skills
-    m_skill = get_skill_speed(main, m_lvl, is_main=True)
-    d_skill = get_skill_speed(deputy, d_lvl, is_main=False)
+    m_skill = get_skill_speed(main, m_lvl, is_main=True, is_theia_flying=is_theia_flying)
+    d_skill = get_skill_speed(deputy, d_lvl, is_main=False, is_theia_flying=is_theia_flying)
     
     # 2. Big Talent (Main Only)
     big_talent_name = m_data.get("Big_Talent", "Mighty Power") 
@@ -189,25 +250,32 @@ def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, u
     fixed_speed = m_skill + d_skill + big_talent_val + artifact_bonus
     
     # 4. Optimized Tree Search
-    gap = target_speed - fixed_speed
-    possible_talents = get_achievable_talent_speeds(main)
+    possible_talents = {}
+    if not main.startswith("Generic"):
+        gap = target_speed - fixed_speed
+        possible_talents = get_achievable_talent_speeds(main)
     
     if not possible_talents:
-        best_speed, tal_desc = 0.0, "Err"
+        # Fallback if generic or error
+        # Generics have 0 talents
+        best_speed, tal_desc = 0.0, "None"
     else:
         # Find closest
+        gap = target_speed - fixed_speed
         best_speed = min(possible_talents.keys(), key=lambda x: abs(x - gap))
         tal_desc, _ = possible_talents[best_speed]
     
     final_speed = fixed_speed + best_speed
     
-    d_type = next(h["Type"] for h in HERO_DATABASE if h["Name"] == deputy)
-    is_synergy = (m_data["Type"] == d_type)
+    # Logic: Generic is assumed Cavalry for synergy purposes (or whatever user prefers)
+    # User said "favor real heroes".
+    # We will assume Generic matches type to avoid synergy penalty noise, since they are fillers.
+    is_synergy = (m_data.get("Type", "Cavalry") == d_type)
     
     skill_breakdown = f"Main({m_skill}) + Dep({d_skill}) + {big_talent_name}({big_talent_val})"
     if artifact_bonus > 0:
         skill_breakdown += f" + Lunaris({artifact_bonus})"
-    
+        
     return MarchSetup(
         main=main,
         deputy=deputy,
@@ -217,7 +285,10 @@ def solve_for_march(main, deputy, user_skill_inputs_levels, target_speed=50.0, u
         skill_breakdown=skill_breakdown
     )
 
-def all_pairs_generator(items):
+def all_pairs_generator(items, forced_mains=None):
+    if forced_mains is None:
+        forced_mains = set()
+
     if len(items) < 2:
         yield []
         return
@@ -229,12 +300,16 @@ def all_pairs_generator(items):
         pair = (first, partner)
         remaining = rest[:i] + rest[i+1:]
         
-        for solution in all_pairs_generator(remaining):
-            yield [pair] + solution
+        # Check: Is partner allowed to be deputy? (i.e. not in forced_mains)
+        if partner not in forced_mains:
+            for solution in all_pairs_generator(remaining, forced_mains):
+                yield [pair] + solution
             
-        pair_flipped = (partner, first)
-        for solution in all_pairs_generator(remaining):
-            yield [pair_flipped] + solution
+        # Check: Is first allowed to be deputy?
+        if first not in forced_mains:
+            pair_flipped = (partner, first)
+            for solution in all_pairs_generator(remaining, forced_mains):
+                yield [pair_flipped] + solution
 
 # ==========================================
 # 3. UI
@@ -249,12 +324,19 @@ st.sidebar.header("Settings")
 TARGET_SPEED = st.sidebar.number_input("Target Speed (%)", min_value=10.0, max_value=100.0, value=50.0, step=1.0)
 
 all_names = [h["Name"] for h in HERO_DATABASE]
-selected_names = st.sidebar.multiselect("Select Heroes", all_names, default=all_names[:6])
+select_all = st.sidebar.checkbox("Select All Heroes")
+default_sel = all_names if select_all else []
+selected_names = st.sidebar.multiselect("Select Heroes", all_names, default=default_sel, key=f"hero_sel_{select_all}")
+num_fillers = st.sidebar.number_input("Add Generic Deputies / Temu Cav Deputies", min_value=0, max_value=10, value=0, help="Use these to fill empty slots in your marches. Can be archer heroes like Nico, or inf like Mogro")
 
 # Artifact Config
 has_neya_artifact = False
 if "Neya" in selected_names:
     has_neya_artifact = st.sidebar.checkbox("Lunaris Artifact (+40%)", value=False)
+    
+is_theia_flying = False
+if "Theia" in selected_names:
+    is_theia_flying = st.sidebar.checkbox("Theia uses Flying Cavs (Eagles)?", value=False, help="Enable if Theia is leading a Flying unit.")
 
 user_skill_levels = {}
 if selected_names:
@@ -267,8 +349,10 @@ if selected_names:
 
 # --- Force Pairings ---
 forced_pairs = []
+forced_mains_only = set()
+
 with st.expander("Force Pairings"):
-    st.caption("Select heroes you definitely want paired together.")
+    st.caption("Select heroes you definitely want paired together. If you select ONLY Main, that hero is forced to be Main (with any deputy).")
     
     # helper to filter choices? No, just show all selected to allow user flexibility, validate later
     # Slot 1
@@ -285,12 +369,27 @@ with st.expander("Force Pairings"):
     c5, c6 = st.columns(2)
     p3_main = c5.selectbox("Pair 3 Main", ["None"] + selected_names, key="fp3m")
     p3_dep = c6.selectbox("Pair 3 Deputy", ["None"] + selected_names, key="fp3d")
+
+    # Slot 4
+    c7, c8 = st.columns(2)
+    p4_main = c7.selectbox("Pair 4 Main", ["None"] + selected_names, key="fp4m")
+    p4_dep = c8.selectbox("Pair 4 Deputy", ["None"] + selected_names, key="fp4d")
+
+    # Slot 5
+    c9, c10 = st.columns(2)
+    p5_main = c9.selectbox("Pair 5 Main", ["None"] + selected_names, key="fp5m")
+    p5_dep = c10.selectbox("Pair 5 Deputy", ["None"] + selected_names, key="fp5d")
     
     # Collect valid inputs
-    raw_inputs = [(p1_main, p1_dep), (p2_main, p2_dep), (p3_main, p3_dep)]
+    raw_inputs = [
+        (p1_main, p1_dep), (p2_main, p2_dep), (p3_main, p3_dep),
+        (p4_main, p4_dep), (p5_main, p5_dep)
+    ]
     for m, d in raw_inputs:
         if m != "None" and d != "None" and m != d:
             forced_pairs.append((m, d))
+        elif m != "None" and d == "None":
+            forced_mains_only.add(m)
 
 # --- Initialize Session State ---
 if 'optimization_results' not in st.session_state:
@@ -304,30 +403,50 @@ def run_optimization():
     pinned_heroes = []
     fixed_results = []
     
-    # Check for duplicates across pins
+    # Check for duplicates across pins and constraints
     all_pinned_flat = [h for pair in forced_pairs for h in pair]
-    if len(all_pinned_flat) != len(set(all_pinned_flat)):
-        st.error("❌ Error: Duplicate heroes used in Forced Pairings!")
+    # Check intersection with forced_mains
+    overlap = set(all_pinned_flat).intersection(forced_mains_only)
+    
+    if len(all_pinned_flat) != len(set(all_pinned_flat)) or overlap:
+        st.error("❌ Error: Duplicate heroes used in Forced Pairings/Constraints!")
         return
         
-    # Check if forced heroes are actually in the selection roster
-    # (Selectbox logic usually ensures this, but good for safety)
-    
     for m, d in forced_pairs:
         pinned_heroes.extend([m, d])
-        # Pre-calc fixed march
-        res = solve_for_march(m, d, user_skill_levels, TARGET_SPEED, has_neya_artifact)
+        res = solve_for_march(m, d, user_skill_levels, TARGET_SPEED, has_neya_artifact, is_theia_flying)
         fixed_results.append(res)
         
     remaining_roster = [h for h in selected_names if h not in pinned_heroes]
     
+    # Add Generics to remaining roster
+    for i in range(num_fillers):
+        remaining_roster.append(f"Generic {i+1}")
+        
     # Check if remainder is odd (one will be dropped)
     potential_rosters = []
     if len(remaining_roster) % 2 != 0:
-        for i in range(len(remaining_roster)):
-                potential_rosters.append(remaining_roster[:i] + remaining_roster[i+1:])
+        # Optimization: Priority drop Generics first.
+        # If we have any generic, we create only 1 potential roster: the one where the last Generic is dropped.
+        generics_in_roster = [h for h in remaining_roster if h.startswith("Generic")]
+        
+        if generics_in_roster:
+            # Remove the last added generic
+            # Find index of last generic
+            bad_hero = generics_in_roster[-1]
+            idx = remaining_roster.index(bad_hero)
+            potential_rosters.append(remaining_roster[:idx] + remaining_roster[idx+1:])
+        else:
+            # No generics, standard round-robin drop
+            for i in range(len(remaining_roster)):
+                if remaining_roster[i] not in forced_mains_only:
+                    potential_rosters.append(remaining_roster[:i] + remaining_roster[i+1:])
     else:
         potential_rosters = [remaining_roster]
+        
+    if not potential_rosters:
+        st.error("❌ Error: Constraints impossible to satisfy (e.g. forced Odd number of Main-Only heroes).")
+        return
         
     count_eval = 0
     MAX_CHECKS = 100000 
@@ -350,12 +469,12 @@ def run_optimization():
          all_valid_results.append((fixed_dev, fixed_results))
     
     for roster in potential_rosters:
-        for pair_list in all_pairs_generator(list(roster)):
+        for pair_list in all_pairs_generator(list(roster), forced_mains_only):
             current_results = list(fixed_results) # Start with pinned
             total_deviation = fixed_dev
             
             for main, deputy in pair_list:
-                res = solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, has_neya_artifact)
+                res = solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, has_neya_artifact, is_theia_flying)
                 current_results.append(res)
                 
                 dev = abs(res.total_speed - TARGET_SPEED)
@@ -383,16 +502,18 @@ def run_optimization():
     # Sort by score ascending (lower deviation is better)
     all_valid_results.sort(key=lambda x: x[0])
     
-    # De-duplicate? Sometimes logic produces identical march sets in different orders?
-    # Our generator preserves order pairs, so distinct sets should be distinct.
-    
     st.session_state.optimization_results = all_valid_results[:20]
     st.session_state.result_index = 0
 
 # --- Main Action ---
 
-if len(selected_names) < 2:
-    st.info("Select 2+ heroes.")
+total_heroes = len(selected_names) + num_fillers
+
+if total_heroes > 10:
+    st.warning("⚠️ You have selected more than 10 heroes. This will attempt to create more than 5 marches, which may produce non-ideal results.")
+
+if total_heroes < 2:
+    st.info("Select 2+ heroes (or add fillers).")
 else:
     if st.button("Optimize", type="primary"):
         with st.spinner("Processing..."):
