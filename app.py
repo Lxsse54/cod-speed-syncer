@@ -242,7 +242,7 @@ def all_pairs_generator(items):
 
 st.set_page_config(page_title="CoD Speed Syncer 3.1", layout="wide")
 st.title("🐎 Speed Synchronizer")
-st.markdown("Enter your heroes and goal speed below.")
+st.markdown("Enter your heroes and goal speed on the right. Force pairings below if wanted.")
 
 # --- Sidebar ---
 st.sidebar.header("Settings")
