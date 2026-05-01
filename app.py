@@ -101,14 +101,14 @@ HERO_DATABASE = [
         "Name": "Freya",
         "Type": "Cavalry",
         "Trees": ["Cavalry", "Control"],
-        "Skill_Speeds": [0.0] * 5,
+        "Skill_Speeds": [4.0, 5.0, 6.0, 8.0, 10.0],
         "Big_Talent": "Backstabber"
     },
     {
         "Name": "Agnar",
         "Type": "Cavalry",
         "Trees": ["Cavalry", "Pvp"],
-        "Skill_Speeds": [0.0] * 5,
+        "Skill_Speeds": [4.0, 5.0, 6.0, 8.0, 10.0],
         "Big_Talent": "Mighty Power"
     },
     {
