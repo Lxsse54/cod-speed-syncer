@@ -3,6 +3,7 @@ import pandas as pd
 import itertools
 import statistics
 from collections import namedtuple
+from functools import lru_cache
 
 # ==========================================
 # 1. Configuration & Constants
@@ -18,7 +19,8 @@ TALENT_TREES_DEF = {
     "Peacekeeping": {10: 10.0},
     "Control": {5: 10.0},
     "Support": {},
-    "Skills": {}
+    "Skills": {},
+    "Garrison": {}
 }
 MAX_TALENT_POINTS = 49
 INNATE_SPEED_BONUS = 6.0
@@ -149,6 +151,20 @@ HERO_DATABASE = [
         "Trees": ["Cavalry", "Tank"],
         "Skill_Speeds": [0.0] * 5,
         "Big_Talent": "Mighty Power" # Default
+    },
+    {
+        "Name": "Thanatil",
+        "Type": "Cavalry",
+        "Trees": ["Cavalry", "Pvp", "Skills"],
+        "Skill_Speeds": [2.0, 4.0, 6.0, 8.0, 10.0],
+        "Big_Talent": "Mighty Power"
+    },
+    {
+        "Name": "Shang Ying",
+        "Type": "Cavalry",
+        "Trees": ["Cavalry", "Garrison", "Tank"],
+        "Skill_Speeds": [2.0, 4.0, 6.0, 8.0, 10.0],
+        "Big_Talent": "Shield of Stability"
     }
 ]
 
@@ -335,12 +351,20 @@ st.markdown("Enter your heroes and goal speed on the left. Force pairings below 
 # --- Sidebar ---
 st.sidebar.header("Settings")
 TARGET_SPEED = st.sidebar.number_input("Target Speed (%)", min_value=10.0, max_value=100.0, value=50.0, step=1.0)
+six_legions_unlocked = st.sidebar.toggle(
+    "6 legions unlocked",
+    value=False,
+    help="Enable if you have unlocked a sixth legion. Each legion uses two heroes.",
+)
+max_legions = 6 if six_legions_unlocked else 5
+max_heroes = max_legions * 2
+st.sidebar.caption(f"Up to {max_legions} legions ({max_heroes} heroes, including generic deputies).")
 
 all_names = [h["Name"] for h in HERO_DATABASE]
 select_all = st.sidebar.checkbox("Select All Heroes")
 default_sel = all_names if select_all else []
 selected_names = st.sidebar.multiselect("Select Heroes", all_names, default=default_sel, key=f"hero_sel_{select_all}")
-num_fillers = st.sidebar.number_input("Add Generic Deputies / Temu Cav Deputies", min_value=0, max_value=10, value=0, help="Use these to fill empty slots in your marches. Can be archer heroes like Nico, or inf like Mogro")
+num_fillers = st.sidebar.number_input("Add Generic Deputies / Temu Cav Deputies", min_value=0, max_value=12, value=0, help="Use these to fill empty slots in your marches. Can be archer heroes like Nico, or inf like Mogro")
 
 # Artifact Config
 neya_artifact_bonus = 0.0
@@ -371,37 +395,13 @@ forced_mains_only = set()
 with st.expander("Force Pairings"):
     st.caption("Select heroes you definitely want paired together. If you select ONLY Main, that hero is forced to be Main (with any deputy).")
     
-    # helper to filter choices? No, just show all selected to allow user flexibility, validate later
-    # Slot 1
-    c1, c2 = st.columns(2)
-    p1_main = c1.selectbox("Pair 1 Main", ["None"] + selected_names, key="fp1m")
-    p1_dep = c2.selectbox("Pair 1 Deputy", ["None"] + selected_names, key="fp1d")
-    
-    # Slot 2
-    c3, c4 = st.columns(2)
-    p2_main = c3.selectbox("Pair 2 Main", ["None"] + selected_names, key="fp2m")
-    p2_dep = c4.selectbox("Pair 2 Deputy", ["None"] + selected_names, key="fp2d")
-    
-    # Slot 3
-    c5, c6 = st.columns(2)
-    p3_main = c5.selectbox("Pair 3 Main", ["None"] + selected_names, key="fp3m")
-    p3_dep = c6.selectbox("Pair 3 Deputy", ["None"] + selected_names, key="fp3d")
+    raw_inputs = []
+    for slot in range(1, max_legions + 1):
+        main_col, deputy_col = st.columns(2)
+        main = main_col.selectbox(f"Pair {slot} Main", ["None"] + selected_names, key=f"fp{slot}m")
+        deputy = deputy_col.selectbox(f"Pair {slot} Deputy", ["None"] + selected_names, key=f"fp{slot}d")
+        raw_inputs.append((main, deputy))
 
-    # Slot 4
-    c7, c8 = st.columns(2)
-    p4_main = c7.selectbox("Pair 4 Main", ["None"] + selected_names, key="fp4m")
-    p4_dep = c8.selectbox("Pair 4 Deputy", ["None"] + selected_names, key="fp4d")
-
-    # Slot 5
-    c9, c10 = st.columns(2)
-    p5_main = c9.selectbox("Pair 5 Main", ["None"] + selected_names, key="fp5m")
-    p5_dep = c10.selectbox("Pair 5 Deputy", ["None"] + selected_names, key="fp5d")
-    
-    # Collect valid inputs
-    raw_inputs = [
-        (p1_main, p1_dep), (p2_main, p2_dep), (p3_main, p3_dep),
-        (p4_main, p4_dep), (p5_main, p5_dep)
-    ]
     for m, d in raw_inputs:
         if m != "None" and d != "None" and m != d:
             forced_pairs.append((m, d))
@@ -414,8 +414,28 @@ if 'optimization_results' not in st.session_state:
 if 'result_index' not in st.session_state:
     st.session_state.result_index = 0
 
+# Results only apply to the current roster, capacity, and speed settings.
+optimization_inputs = (
+    max_legions, TARGET_SPEED, tuple(selected_names), num_fillers,
+    neya_artifact_bonus, is_theia_flying, tuple(user_skill_levels.items()),
+    tuple(forced_pairs), frozenset(forced_mains_only),
+)
+if st.session_state.get('optimization_inputs') != optimization_inputs:
+    st.session_state.optimization_results = []
+    st.session_state.result_index = 0
+    st.session_state.optimization_inputs = optimization_inputs
+
 # --- Helper Logic ---
 def run_optimization():
+    if len(selected_names) + num_fillers > max_heroes:
+        st.error(f"Select at most {max_heroes} heroes for {max_legions} legions, including generic deputies.")
+        return
+
+    # Each ordered pair has the same speed throughout this optimization run.
+    @lru_cache(maxsize=None)
+    def solve_pair(main, deputy):
+        return solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, neya_artifact_bonus, is_theia_flying)
+
     # 1. Validate Forced Pairs
     pinned_heroes = []
     fixed_results = []
@@ -431,7 +451,7 @@ def run_optimization():
         
     for m, d in forced_pairs:
         pinned_heroes.extend([m, d])
-        res = solve_for_march(m, d, user_skill_levels, TARGET_SPEED, neya_artifact_bonus, is_theia_flying)
+        res = solve_pair(m, d)
         fixed_results.append(res)
         
     remaining_roster = [h for h in selected_names if h not in pinned_heroes]
@@ -491,7 +511,7 @@ def run_optimization():
             total_deviation = fixed_dev
             
             for main, deputy in pair_list:
-                res = solve_for_march(main, deputy, user_skill_levels, TARGET_SPEED, neya_artifact_bonus, is_theia_flying)
+                res = solve_pair(main, deputy)
                 current_results.append(res)
                 
                 dev = abs(res.total_speed - TARGET_SPEED)
@@ -526,13 +546,14 @@ def run_optimization():
 
 total_heroes = len(selected_names) + num_fillers
 
-if total_heroes > 10:
-    st.warning("⚠️ You have selected more than 10 heroes. This will attempt to create more than 5 marches, which may produce non-ideal results.")
+if total_heroes > max_heroes:
+    capacity_hint = " Enable '6 legions unlocked' to use up to 12 heroes." if not six_legions_unlocked else ""
+    st.warning(f"⚠️ You selected {total_heroes} heroes. {max_legions} legions can use at most {max_heroes} heroes, including generic deputies. Remove heroes or generic deputies to fit.{capacity_hint}")
 
 if total_heroes < 2:
     st.info("Select 2+ heroes (or add fillers).")
 else:
-    if st.button("Optimize", type="primary"):
+    if st.button("Optimize", type="primary", disabled=total_heroes > max_heroes):
         with st.spinner("Processing..."):
             run_optimization()
 
