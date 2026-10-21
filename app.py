@@ -172,7 +172,7 @@ HERO_DATABASE = [
 # Format: "HeroName": {"PartnerName": "Type"}
 # Types: "Synergy" (Green), "Anti-Synergy" (Red)
 HERO_SYNERGIES = {
-    # Placeholders - User to provide
+    "Shang Ying": {"Thanatil": "Synergy"}
 }
 
 MarchSetup = namedtuple('MarchSetup', ['main', 'deputy', 'total_speed', 'talent_config', 'synergy_match', 'skill_breakdown', 'specific_synergy'])
